@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MQTT Sniffer — Roadeazy</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d1117;
+      --bg2:       #161b22;
+      --bg3:       #1c2128;
+      --bg4:       #21262d;
+      --border:    #30363d;
+      --text:      #e6edf3;
+      --muted:     #8b949e;
+      --c-ipc:     #58a6ff;
+      --c-event:   #3fb950;
+      --c-set:     #d29922;
+      --c-unknown: #8b949e;
+      --c-error:   #f85149;
+      --hdr:       52px;
+      --flt:       46px;
+    }
+
+    html, body {
+      height: 100%; overflow: hidden;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg); color: var(--text); font-size: 14px;
+    }
+
+    /* ── HEADER ─────────────────────────────────── */
+    .hdr {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+      height: var(--hdr);
+      background: var(--bg2); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px; padding: 0 14px;
+    }
+    .brand { display: flex; align-items: center; gap: 8px; user-select: none; }
+    .brand-icon { font-size: 1.3rem; }
+    .brand-name { font-size: 1rem; font-weight: 700; color: var(--c-ipc); white-space: nowrap; }
+    .brand-sep  { color: var(--border); }
+    .brand-sub  { font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+
+    .dot {
+      width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+      background: var(--c-error); transition: background .3s;
+    }
+    .dot.on      { background: var(--c-event); box-shadow: 0 0 7px var(--c-event); }
+    .dot.blink   { animation: blink 1s ease-in-out infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+    #url-in {
+      flex: 1; max-width: 300px;
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); padding: 5px 10px;
+      font-size: .8rem; font-family: monospace; outline: none;
+    }
+    #url-in:focus { border-color: var(--c-ipc); }
+
+    .btn {
+      padding: 5px 13px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg3); color: var(--text);
+      cursor: pointer; font-size: .8rem; white-space: nowrap;
+      transition: background .15s;
+    }
+    .btn:hover { background: var(--bg4); }
+    .btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+    .btn.primary:hover { background: #388bfd; }
+    .btn.danger  { border-color: var(--c-error); color: var(--c-error); }
+    .btn.danger:hover { background: #3a1010; }
+    .btn.warn    { border-color: var(--c-set); color: var(--c-set); }
+    .btn.warn:hover { background: #3a2c10; }
+    .btn.pause.active { background: #3a2c10; border-color: var(--c-set); color: var(--c-set); }
+
+    #lbl-status { font-size: .75rem; color: var(--muted); white-space: nowrap; min-width: 80px; }
+
+    /* ── FILTER BAR ──────────────────────────────── */
+    .flt-bar {
+      position: fixed; top: var(--hdr); left: 0; right: 0; z-index: 199;
+      height: var(--flt);
+      background: var(--bg2); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px; padding: 0 14px;
+    }
+    #search-in {
+      width: 220px;
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); padding: 4px 10px;
+      font-family: monospace; font-size: .78rem; outline: none;
+    }
+    #search-in:focus { border-color: var(--c-ipc); }
+
+    .pills { display: flex; gap: 4px; }
+    .pill {
+      padding: 3px 10px; border-radius: 12px; border: 1px solid var(--border);
+      background: transparent; color: var(--muted); cursor: pointer; font-size: .72rem;
+      transition: all .15s;
+    }
+    .pill:hover { border-color: var(--text); color: var(--text); }
+    .pill.on[data-c="all"]     { background:#21262d; border-color:var(--text);      color:var(--text);      }
+    .pill.on[data-c="ipc"]     { background:#0d2044; border-color:var(--c-ipc);     color:var(--c-ipc);     }
+    .pill.on[data-c="event"]   { background:#0d2e12; border-color:var(--c-event);   color:var(--c-event);   }
+    .pill.on[data-c="set"]     { background:#2e2208; border-color:var(--c-set);     color:var(--c-set);     }
+    .pill.on[data-c="unknown"] { background:#21262d; border-color:var(--c-unknown); color:var(--c-unknown); }
+
+    .hdr-stats {
+      margin-left: auto; display: flex; gap: 14px;
+      font-size: .75rem; color: var(--muted); white-space: nowrap;
+    }
+    .hdr-stats b { color: var(--text); font-weight: 600; }
+
+    /* ── MAIN LAYOUT ─────────────────────────────── */
+    .main {
+      position: fixed;
+      top: calc(var(--hdr) + var(--flt));
+      left: 0; right: 0; bottom: 0;
+      display: flex;
+    }
+
+    /* ── FEED ────────────────────────────────────── */
+    .feed {
+      flex: 1;
+      min-height: 0;
+      min-width: 0;
+      overflow-y: scroll;
+      overflow-x: hidden;
+      padding: 10px 10px 10px 12px;
+      display: block;   /* block, NOT flex — flex-column shrinks children to fit height */
+    }
+    .feed .card { margin-bottom: 5px; }
+    .feed::-webkit-scrollbar { width: 7px; }
+    .feed::-webkit-scrollbar-track { background: var(--bg3); }
+    .feed::-webkit-scrollbar-thumb { background: #3d444d; border-radius: 4px; }
+    .feed::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+    /* empty state */
+    .empty {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 10px;
+      color: var(--muted); padding: 80px 60px;
+    }
+    .empty-icon { font-size: 3rem; opacity: .35; }
+    .empty-text { font-size: .9rem; }
+
+    /* ── MESSAGE CARD ────────────────────────────── */
+    .card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--c-unknown);
+      border-radius: 7px; overflow: hidden; cursor: pointer;
+    }
+    .card:hover { border-color: #484f58; }
+    .card.ipc     { border-left-color: var(--c-ipc);     }
+    .card.event   { border-left-color: var(--c-event);   }
+    .card.set     { border-left-color: var(--c-set);     }
+    .card.err     { border-left-color: var(--c-error);   }
+
+    .card-hdr {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; user-select: none;
+    }
+
+    .badge {
+      font-size: .72rem; font-weight: 700; letter-spacing: .5px;
+      padding: 3px 9px; border-radius: 5px; flex-shrink: 0;
+    }
+    .ipc   .badge { background: #0d2044; color: var(--c-ipc);   }
+    .event .badge { background: #0d2e12; color: var(--c-event); }
+    .set   .badge { background: #2e2208; color: var(--c-set);   }
+    .err   .badge { background: #2e0d0d; color: var(--c-error); }
+    .card:not(.ipc):not(.event):not(.set):not(.err) .badge { background: var(--bg4); color: var(--muted); }
+
+    .card-ts     { font-size: .82rem; color: var(--muted); font-family: monospace; flex-shrink: 0; }
+    .card-schema { font-size: .92rem; font-weight: 700; flex-shrink: 0; }
+    .card-topic  {
+      font-size: .82rem; color: var(--muted); font-family: monospace;
+      flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .card-sz     {
+      font-size: .75rem; color: var(--muted);
+      background: var(--bg4); padding: 2px 8px; border-radius: 4px; flex-shrink: 0;
+    }
+    .card-arr    { font-size: .8rem; color: var(--border); flex-shrink: 0; transition: transform .15s; }
+    .card.open .card-arr { transform: rotate(90deg); }
+
+    /* summary row */
+    .card-sum {
+      padding: 0 14px 10px 14px;
+      font-size: .82rem; font-family: monospace;
+      color: var(--muted); white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .kk { color: #79c0ff; }
+    .kv { color: #e6edf3; }
+
+    /* detail panel */
+    .card-body {
+      display: none; border-top: 1px solid var(--border);
+      background: var(--bg3); padding: 0;
+      max-height: 340px;
+      overflow-y: auto;
+    }
+    .card-body::-webkit-scrollbar { width: 6px; }
+    .card-body::-webkit-scrollbar-track { background: var(--bg3); }
+    .card-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .card.open .card-body { display: block; }
+
+    .card-body-inner { padding: 12px 16px; }
+
+    .card-body pre {
+      font-family: 'Consolas', 'Fira Code', monospace; font-size: .85rem;
+      color: var(--text); white-space: pre-wrap; word-break: break-all; line-height: 1.65;
+    }
+    .cp-btn {
+      float: right; margin-bottom: 8px;
+      padding: 3px 10px; font-size: .75rem;
+      border: 1px solid var(--border); border-radius: 4px;
+      background: var(--bg2); color: var(--muted); cursor: pointer;
+    }
+    .cp-btn:hover { color: var(--text); }
+
+    /* JSON colours */
+    .jk { color: #79c0ff; }   /* key   */
+    .js { color: #a5d6ff; }   /* str   */
+    .jn { color: #ffa657; }   /* num   */
+    .jb { color: #f78166; }   /* bool  */
+    .jz { color: #8b949e; }   /* null  */
+
+    /* ── SIDEBAR ─────────────────────────────────── */
+    .side {
+      width: 268px; flex-shrink: 0;
+      min-height: 0;          /* same flexbox fix */
+      border-left: 1px solid var(--border);
+      overflow-y: auto; padding: 14px 12px;
+      display: flex; flex-direction: column; gap: 18px;
+    }
+    .side::-webkit-scrollbar { width: 5px; }
+    .side::-webkit-scrollbar-thumb { background: #3d444d; border-radius: 3px; }
+
+    .s-title {
+      font-size: .68rem; font-weight: 700; letter-spacing: 1.2px;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
+    }
+
+    /* stat boxes */
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .sbox {
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px;
+    }
+    .sbox-val { font-size: 1.35rem; font-weight: 700; line-height: 1; }
+    .sbox-lbl { font-size: .65rem; color: var(--muted); margin-top: 4px; }
+
+    /* category rows */
+    .cat-rows { display: flex; flex-direction: column; gap: 5px; }
+    .cat-row  { display: flex; align-items: center; gap: 7px; font-size: .75rem; }
+    .cat-dot  { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .cat-name { flex: 1; color: var(--muted); }
+    .cat-num  { font-family: monospace; }
+
+    /* top topic bars */
+    .t-list { display: flex; flex-direction: column; gap: 8px; }
+    .t-row  { font-size: .7rem; }
+    .t-name {
+      font-family: monospace; color: var(--muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      margin-bottom: 3px;
+    }
+    .t-bar-row { display: flex; align-items: center; gap: 6px; }
+    .t-bar     { height: 4px; border-radius: 2px; background: var(--c-ipc); min-width: 3px; }
+    .t-cnt     { font-family: monospace; color: var(--text); font-size: .68rem; }
+
+    /* scroll-to-bottom fab */
+    #fab {
+      position: fixed; bottom: 18px; right: 282px;
+      background: var(--c-ipc); color: #fff;
+      border: none; border-radius: 20px; padding: 6px 16px;
+      font-size: .78rem; cursor: pointer; display: none;
+      box-shadow: 0 3px 14px rgba(0,0,0,.5); z-index: 50;
+    }
+    #fab:hover { background: #388bfd; }
+  </style>
+</head>
+<body>
+
+<!-- ── HEADER ───────────────────────────────────────────────────── -->
+<header class="hdr">
+  <div class="brand">
+    <span class="brand-icon">🔍</span>
+    <span class="brand-name">MQTT Sniffer</span>
+    <span class="brand-sep">|</span>
+    <span class="brand-sub">Roadeazy · Protobuf decoder</span>
+  </div>
+
+  <span id="dot" class="dot"></span>
+  <span id="lbl-status" style="font-size:.75rem;color:var(--muted);white-space:nowrap;min-width:100px">Disconnected</span>
+
+  <input id="url-in" type="text" value="mqtt://127.0.0.1:1883" placeholder="mqtt://host:port">
+  <button class="btn primary" id="btn-connect">Connect</button>
+  <button class="btn danger"  id="btn-disc"    style="display:none">Disconnect</button>
+  <button class="btn pause"   id="btn-pause">⏸ Pause</button>
+  <button class="btn warn"    id="btn-clear">🗑 Clear</button>
+</header>
+
+<!-- ── FILTER BAR ────────────────────────────────────────────────── -->
+<div class="flt-bar">
+  <input id="search-in" type="text" placeholder="Filter by topic or schema…">
+
+  <div class="pills">
+    <button class="pill on" data-c="all">ALL</button>
+    <button class="pill"    data-c="ipc">IPC</button>
+    <button class="pill"    data-c="event">EVENT</button>
+    <button class="pill"    data-c="set">SET</button>
+    <button class="pill"    data-c="unknown">UNKNOWN</button>
+  </div>
+
+  <div class="hdr-stats">
+    Total <b id="st-total">0</b>
+    &nbsp;·&nbsp;
+    <b id="st-rate">0.0</b>/s
+    &nbsp;·&nbsp;
+    <b id="st-topics">0</b> topics
+    &nbsp;·&nbsp;
+    Visible <b id="st-vis">0</b>
+  </div>
+</div>
+
+<!-- ── MAIN ──────────────────────────────────────────────────────── -->
+<div class="main">
+  <div id="feed" class="feed">
+    <div class="empty" id="empty">
+      <div class="empty-icon">📡</div>
+      <div class="empty-text">Waiting for MQTT messages…</div>
+    </div>
+  </div>
+
+  <aside class="side">
+    <!-- Stats -->
+    <div>
+      <div class="s-title">Statistics</div>
+      <div class="stat-grid">
+        <div class="sbox"><div class="sbox-val" id="sb-total">0</div><div class="sbox-lbl">Total msgs</div></div>
+        <div class="sbox"><div class="sbox-val" id="sb-rate">0</div><div class="sbox-lbl">msgs / sec</div></div>
+        <div class="sbox"><div class="sbox-val" id="sb-topics">0</div><div class="sbox-lbl">Unique topics</div></div>
+        <div class="sbox"><div class="sbox-val" id="sb-kb">0</div><div class="sbox-lbl">KB received</div></div>
+      </div>
+    </div>
+
+    <!-- By category -->
+    <div>
+      <div class="s-title">By Category</div>
+      <div class="cat-rows">
+        <div class="cat-row"><span class="cat-dot" style="background:var(--c-ipc)"></span>   <span class="cat-name">IPC</span>           <span class="cat-num" id="cc-ipc">0</span></div>
+        <div class="cat-row"><span class="cat-dot" style="background:var(--c-event)"></span> <span class="cat-name">Vehicle Event</span> <span class="cat-num" id="cc-event">0</span></div>
+        <div class="cat-row"><span class="cat-dot" style="background:var(--c-set)"></span>   <span class="cat-name">Vehicle Set</span>   <span class="cat-num" id="cc-set">0</span></div>
+        <div class="cat-row"><span class="cat-dot" style="background:var(--c-unknown)"></span><span class="cat-name">Unknown</span>       <span class="cat-num" id="cc-unk">0</span></div>
+        <div class="cat-row"><span class="cat-dot" style="background:var(--c-error)"></span> <span class="cat-name">Decode errors</span> <span class="cat-num" id="cc-err">0</span></div>
+      </div>
+    </div>
+
+    <!-- Top topics -->
+    <div>
+      <div class="s-title">Top Topics</div>
+      <div class="t-list" id="t-list"></div>
+    </div>
+  </aside>
+</div>
+
+<button id="fab">↓ Jump to latest</button>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+const MAX_DOM   = 500;   // max cards visible in DOM at once
+const MAX_STORE = 3000;  // max messages kept in memory
+
+// ── State ──────────────────────────────────────────────────────────────────
+let ws        = null;
+let paused    = false;
+let fCat      = 'all';
+let fText     = '';
+let msgs      = [];       // all received messages
+let topicMap  = {};       // topic → count
+let catCnt    = { ipc:0, event:0, set:0, unknown:0, error:0 };
+let totalBytes= 0;
+let totalMsgs = 0;
+let rateWin   = [];       // timestamps for rate calc (sliding 5 s window)
+let autoScroll= true;
+let visCount  = 0;
+
+const feed = document.getElementById('feed');
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtTime(ts) {
+  const d = new Date(ts);
+  const h = String(d.getHours()).padStart(2,'0');
+  const m = String(d.getMinutes()).padStart(2,'0');
+  const s = String(d.getSeconds()).padStart(2,'0');
+  const ms= String(d.getMilliseconds()).padStart(3,'0');
+  return `${h}:${m}:${s}.${ms}`;
+}
+
+function fmtSize(b) {
+  return b >= 1024 ? `${(b/1024).toFixed(1)} KB` : `${b} B`;
+}
+
+// Safe JSON highlighter (operates on HTML-escaped JSON)
+function highlight(obj) {
+  const raw = JSON.stringify(obj, null, 2);
+  // Escape HTML chars first, then colour-code with spans
+  return raw
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    // keys:  "word":
+    .replace(/^( *)"([^"\\]*)"/gm, (_, sp, k) => `${sp}<span class="jk">"${k}"</span>`)
+    // string values:  ": "…"
+    .replace(/: "([^"\\]*)"/g, ': <span class="js">"$1"</span>')
+    // booleans
+    .replace(/: (true|false)/g, ': <span class="jb">$1</span>')
+    // null
+    .replace(/: null/g, ': <span class="jz">null</span>')
+    // numbers
+    .replace(/: (-?\d+\.?\d*(?:[eE][+-]?\d+)?)/g, ': <span class="jn">$1</span>');
+}
+
+// Build a one-line key:val summary from flat scalar fields
+function summary(decoded) {
+  if (!decoded || typeof decoded !== 'object') return '';
+  const parts = [];
+  for (const [k, v] of Object.entries(decoded)) {
+    if (k.startsWith('_') || v === null || typeof v === 'object' || Array.isArray(v)) continue;
+    const val = typeof v === 'number'
+      ? (Number.isInteger(v) ? v : +v.toFixed(4))
+      : String(v);
+    if (String(val).length > 50) continue;
+    parts.push(`<span class="kk">${esc(k)}</span>:<span class="kv">${esc(val)}</span>`);
+    if (parts.length >= 7) { parts.push('<span style="color:var(--muted)">…</span>'); break; }
+  }
+  return parts.join('  ');
+}
+
+// ── Matching ───────────────────────────────────────────────────────────────
+function matches(msg) {
+  // category filter
+  if (fCat !== 'all') {
+    const eff = msg.error ? 'error' : (msg.decoded ? msg.cat : 'unknown');
+    if (fCat === 'unknown' && eff !== 'unknown') return false;
+    if (fCat !== 'unknown' && eff !== fCat)      return false;
+  }
+  // text filter
+  if (fText) {
+    const q = fText.toLowerCase();
+    return msg.topic.toLowerCase().includes(q)
+        || (msg.schema || '').toLowerCase().includes(q);
+  }
+  return true;
+}
+
+// ── Render one card ────────────────────────────────────────────────────────
+function buildCard(msg) {
+  const eff    = msg.error ? 'err' : (msg.decoded ? msg.cat : '');
+  const badge  = msg.cat.toUpperCase();
+  const detail = msg.decoded
+    || (msg.raw ? { _raw: msg.raw, _error: msg.error } : { _error: msg.error });
+  const jsonStr = JSON.stringify(detail, null, 2);
+  const sum     = summary(msg.decoded);
+
+  const el = document.createElement('div');
+  el.className = `card ${eff}`;
+  el.dataset.id = msg.id;
+
+  el.innerHTML = `
+    <div class="card-hdr">
+      <span class="badge">${badge}</span>
+      <span class="card-ts">${fmtTime(msg.ts)}</span>
+      <span class="card-schema">${esc(msg.schema || '—')}</span>
+      <span class="card-topic" title="${esc(msg.topic)}">${esc(msg.topic)}</span>
+      <span class="card-sz">${fmtSize(msg.size)}</span>
+      <span class="card-arr">▶</span>
+    </div>
+    ${sum ? `<div class="card-sum">${sum}</div>` : ''}
+    <div class="card-body">
+      <div class="card-body-inner">
+        <button class="cp-btn">Copy JSON</button>
+        <pre>${highlight(detail)}</pre>
+      </div>
+    </div>`;
+
+  // Toggle expand/collapse — scroll card into view when opening
+  el.querySelector('.card-hdr').addEventListener('click', () => {
+    const opening = !el.classList.contains('open');
+    el.classList.toggle('open');
+    if (opening) {
+      setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+    }
+  });
+
+  // Copy to clipboard
+  el.querySelector('.cp-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(jsonStr).catch(() => {});
+    const btn = e.target;
+    btn.textContent = '✓ Copied';
+    setTimeout(() => { btn.textContent = 'Copy JSON'; }, 1500);
+  });
+
+  return el;
+}
+
+// ── Append one message to the feed ────────────────────────────────────────
+function appendToFeed(msg) {
+  if (!matches(msg)) return;
+
+  const empty = document.getElementById('empty');
+  if (empty) empty.remove();
+
+  feed.appendChild(buildCard(msg));
+  visCount++;
+
+  // Trim oldest cards if DOM is too large
+  if (visCount > MAX_DOM) {
+    feed.removeChild(feed.firstChild);
+    visCount--;
+  }
+
+  if (autoScroll) feed.scrollTop = feed.scrollHeight;
+  document.getElementById('st-vis').textContent = visCount;
+}
+
+// ── Full re-render (after filter change or resume) ────────────────────────
+function rerender() {
+  while (feed.firstChild) feed.removeChild(feed.firstChild);
+  visCount = 0;
+
+  const filtered = msgs.filter(matches);
+  const slice    = filtered.slice(-MAX_DOM);
+
+  if (slice.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'empty'; e.id = 'empty';
+    e.innerHTML = '<div class="empty-icon">📡</div><div class="empty-text">No messages match the current filter</div>';
+    feed.appendChild(e);
+  } else {
+    const frag = document.createDocumentFragment();
+    for (const m of slice) { frag.appendChild(buildCard(m)); visCount++; }
+    feed.appendChild(frag);
+    if (autoScroll) feed.scrollTop = feed.scrollHeight;
+  }
+  document.getElementById('st-vis').textContent = visCount;
+}
+
+// ── Update sidebar stats ──────────────────────────────────────────────────
+function updateStats() {
+  const now = Date.now();
+  rateWin = rateWin.filter(t => now - t < 5000);
+  const rate = (rateWin.length / 5).toFixed(1);
+  const topicCount = Object.keys(topicMap).length;
+
+  document.getElementById('st-total').textContent  = totalMsgs;
+  document.getElementById('st-rate').textContent   = rate;
+  document.getElementById('st-topics').textContent = topicCount;
+
+  document.getElementById('sb-total').textContent  = totalMsgs;
+  document.getElementById('sb-rate').textContent   = rate;
+  document.getElementById('sb-topics').textContent = topicCount;
+  document.getElementById('sb-kb').textContent     = (totalBytes / 1024).toFixed(1);
+
+  document.getElementById('cc-ipc').textContent   = catCnt.ipc;
+  document.getElementById('cc-event').textContent = catCnt.event;
+  document.getElementById('cc-set').textContent   = catCnt.set;
+  document.getElementById('cc-unk').textContent   = catCnt.unknown;
+  document.getElementById('cc-err').textContent   = catCnt.error;
+
+  // Top 12 topics bar chart
+  const top     = Object.entries(topicMap).sort((a,b)=>b[1]-a[1]).slice(0,12);
+  const maxCnt  = top[0]?.[1] || 1;
+  const list    = document.getElementById('t-list');
+  list.innerHTML = top.map(([t, c]) => `
+    <div class="t-row">
+      <div class="t-name" title="${esc(t)}">${esc(t)}</div>
+      <div class="t-bar-row">
+        <div class="t-bar" style="width:${Math.round(c/maxCnt*130)}px"></div>
+        <span class="t-cnt">${c}</span>
+      </div>
+    </div>`).join('');
+}
+
+// (connectWs defined below in Boot section)
+
+// ── UI Controls ───────────────────────────────────────────────────────────
+document.getElementById('btn-connect').addEventListener('click', () => {
+  const url = document.getElementById('url-in').value.trim();
+  if (url) ws?.send(JSON.stringify({ action: 'connect', url }));
+});
+
+document.getElementById('btn-disc').addEventListener('click', () => {
+  ws?.send(JSON.stringify({ action: 'disconnect' }));
+});
+
+document.getElementById('btn-pause').addEventListener('click', function () {
+  paused = !paused;
+  this.classList.toggle('active', paused);
+  this.textContent = paused ? '▶ Resume' : '⏸ Pause';
+  if (!paused) rerender();   // flush buffered messages on resume
+});
+
+document.getElementById('btn-clear').addEventListener('click', () => {
+  msgs = []; topicMap = {};
+  catCnt = { ipc:0, event:0, set:0, unknown:0, error:0 };
+  totalMsgs = 0; totalBytes = 0; rateWin = []; visCount = 0;
+
+  while (feed.firstChild) feed.removeChild(feed.firstChild);
+  const e = document.createElement('div');
+  e.className = 'empty'; e.id = 'empty';
+  e.innerHTML = '<div class="empty-icon">📡</div><div class="empty-text">Waiting for MQTT messages…</div>';
+  feed.appendChild(e);
+
+  updateStats();
+  document.getElementById('st-vis').textContent = 0;
+});
+
+// Search
+document.getElementById('search-in').addEventListener('input', function () {
+  fText = this.value.trim();
+  rerender();
+});
+
+// Category pills
+document.querySelectorAll('.pill').forEach(pill => {
+  pill.addEventListener('click', function () {
+    document.querySelectorAll('.pill').forEach(p => p.classList.remove('on'));
+    this.classList.add('on');
+    fCat = this.dataset.c;
+    rerender();
+  });
+});
+
+// Auto-scroll: stop the moment the user scrolls, restart when they reach the bottom
+feed.addEventListener('wheel', () => { autoScroll = false; });
+feed.addEventListener('touchmove', () => { autoScroll = false; });
+feed.addEventListener('scroll', () => {
+  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
+  if (atBottom) autoScroll = true;
+  document.getElementById('fab').style.display = atBottom ? 'none' : 'block';
+});
+
+document.getElementById('fab').addEventListener('click', () => {
+  autoScroll = true;
+  feed.scrollTop = feed.scrollHeight;
+  document.getElementById('fab').style.display = 'none';
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+// WebSocket runs on HTTP_PORT+1 (server.py: WS_PORT = PORT + 1)
+function connectWs() {
+  const proto  = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsPort = parseInt(location.port || '3000') + 1;
+  ws = new WebSocket(`${proto}//${location.hostname}:${wsPort}`);
+
+  ws.onopen = () => console.log('[WS] connected to sniffer backend');
+
+  ws.onmessage = ({ data }) => {
+    let evt;
+    try { evt = JSON.parse(data); } catch { return; }
+
+    if (evt.type === 'status') {
+      const dot  = document.getElementById('dot');
+      const lbl  = document.getElementById('lbl-status');
+      const btnC = document.getElementById('btn-connect');
+      const btnD = document.getElementById('btn-disc');
+
+      if (evt.connected) {
+        dot.className = 'dot on';
+        lbl.textContent = `Connected  ${evt.url}`;
+        btnC.style.display = 'none';
+        btnD.style.display = '';
+        document.getElementById('url-in').value = evt.url;
+      } else {
+        dot.className = `dot${evt.reconnecting ? ' blink' : ''}`;
+        lbl.textContent = evt.reconnecting ? 'Reconnecting…' : 'Disconnected';
+        btnC.style.display = '';
+        btnD.style.display = 'none';
+      }
+    }
+
+    if (evt.type === 'msg') {
+      if (msgs.length >= MAX_STORE) msgs.shift();
+      msgs.push(evt);
+
+      totalMsgs++;
+      totalBytes += evt.size || 0;
+      topicMap[evt.topic] = (topicMap[evt.topic] || 0) + 1;
+      rateWin.push(Date.now());
+
+      const eff = evt.error ? 'error' : (evt.decoded ? evt.cat : 'unknown');
+      catCnt[eff] = (catCnt[eff] || 0) + 1;
+
+      if (!paused) appendToFeed(evt);
+      updateStats();
+    }
+
+    if (evt.type === 'error') {
+      console.warn('[MQTT error]', evt.message);
+    }
+  };
+
+  ws.onclose = () => {
+    console.log('[WS] disconnected — retrying in 2 s');
+    setTimeout(connectWs, 2000);
+  };
+}
+
+connectWs();
+setInterval(updateStats, 1000);
+</script>
+</body>
+</html>
